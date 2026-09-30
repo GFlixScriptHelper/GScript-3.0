@@ -1,0 +1,835 @@
+-- GScript 3.0 (BETA) | Loader + Menu
+-- Run this one. It builds the menu, then loads the tab modules (Tab_ESP.lua, Tab_Platform.lua, ...)
+-- and each module adds its own tab through the shared GScript3 table.
+-- To remove it: game:GetService("CoreGui"):FindFirstChild("GScript3"):Destroy()
+
+----------------------------------------------------------------
+-- CONFIG (edit these)
+----------------------------------------------------------------
+-- Raw folder on GitHub where the Tab_*.lua files live (must end with "/")
+local BASE_URL = "https://raw.githubusercontent.com/GFlixScriptHelper/GScript-1.03/main/"
+
+-- true = load modules from your executor's workspace folder instead of GitHub (handy for testing).
+-- Put Tab_ESP.lua and Tab_Platform.lua inside <executor workspace>/GScript3/
+local PREFER_LOCAL = false
+local LOCAL_FOLDER = "GScript3/"
+
+-- key = the Checker label name, file = module to load (no file = SOON)
+local MODULES = {
+	{ key = "ESP",      file = "Tab_ESP.lua" },
+	{ key = "Twisteds", file = "Tab_Twisteds.lua" },
+	{ key = "Platform", file = "Tab_Platform.lua" },
+	{ key = "Collider" },
+	{ key = "BAX" },
+	{ key = "Mobile" },
+	{ key = "Options" },
+}
+
+----------------------------------------------------------------
+-- Services
+----------------------------------------------------------------
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+
+-- shared table for the modules (getgenv in executors, _G as a fallback)
+local Env = (getgenv and getgenv()) or _G
+
+-- remove the previous copy so you can re-run it as many times as you want
+local old = CoreGui:FindFirstChild("GScript3")
+if old then
+	old:Destroy()
+end
+
+----------------------------------------------------------------
+-- GUI
+----------------------------------------------------------------
+local GScript3_1 = Instance.new("ScreenGui")
+GScript3_1.Name = "GScript3"
+GScript3_1.IgnoreGuiInset = true
+GScript3_1.ScreenInsets = Enum.ScreenInsets.None
+GScript3_1.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+GScript3_1.SelectionGroup = false
+GScript3_1.DisplayOrder = 99
+GScript3_1.ResetOnSpawn = false
+
+local MainFrame_2 = Instance.new("Frame")
+MainFrame_2.Name = "MainFrame"
+MainFrame_2.Active = false
+MainFrame_2.AnchorPoint = Vector2.new(0.5, 0.5)
+MainFrame_2.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+MainFrame_2.BorderColor3 = Color3.fromRGB(0, 0, 0)
+MainFrame_2.BorderSizePixel = 0
+MainFrame_2.ClipsDescendants = true
+MainFrame_2.Position = UDim2.new(0.5, 0, 0.5, 0)
+MainFrame_2.Selectable = false
+MainFrame_2.ZIndex = 2
+MainFrame_2.SelectionGroup = false
+MainFrame_2.Size = UDim2.new(0.6, 0, 0.6, 0)
+MainFrame_2.Parent = GScript3_1
+
+local UICorner_3 = Instance.new("UICorner")
+UICorner_3.Parent = MainFrame_2
+
+local UIStroke_4 = Instance.new("UIStroke")
+UIStroke_4.Thickness = 3
+UIStroke_4.Parent = MainFrame_2
+
+local UIGradient_5 = Instance.new("UIGradient")
+UIGradient_5.Rotation = 90
+UIGradient_5.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(53, 53, 53)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(11, 11, 11)),
+})
+UIGradient_5.Parent = MainFrame_2
+
+local Logo_6 = Instance.new("ImageLabel")
+Logo_6.Name = "Logo"
+Logo_6.Active = false
+Logo_6.AnchorPoint = Vector2.new(0.5, 0.5)
+Logo_6.BackgroundTransparency = 1
+Logo_6.BorderSizePixel = 0
+Logo_6.ClipsDescendants = false
+Logo_6.Position = UDim2.new(0.4989, 0, 0.41383, 0)
+Logo_6.Selectable = false
+Logo_6.SelectionGroup = false
+Logo_6.Size = UDim2.new(0.7, 0, 0.7, 0)
+Logo_6.Image = "rbxassetid://108729561525853"
+Logo_6.ScaleType = Enum.ScaleType.Fit
+Logo_6.Parent = MainFrame_2
+
+local UIAspectRatioConstraint_7 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_7.AspectRatio = 1.78
+UIAspectRatioConstraint_7.Parent = MainFrame_2
+
+local LoadingBackground = Instance.new("Frame")
+LoadingBackground.Name = "LoadingBackground"
+LoadingBackground.AnchorPoint = Vector2.new(0.5, 0.5)
+LoadingBackground.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+LoadingBackground.BorderSizePixel = 0
+LoadingBackground.Position = UDim2.new(0.5, 0, 0.88, 0)
+LoadingBackground.Size = UDim2.new(0.6, 0, 0.05, 0)
+LoadingBackground.Parent = MainFrame_2
+
+local LoadingCorner = Instance.new("UICorner")
+LoadingCorner.CornerRadius = UDim.new(1, 0)
+LoadingCorner.Parent = LoadingBackground
+
+local LoadingBar = Instance.new("Frame")
+LoadingBar.Name = "LoadingBar"
+LoadingBar.AnchorPoint = Vector2.new(0, 0.5)
+LoadingBar.BackgroundColor3 = Color3.fromRGB(255, 170, 40)
+LoadingBar.BorderSizePixel = 0
+LoadingBar.Position = UDim2.new(0, 0, 0.5, 0)
+LoadingBar.Size = UDim2.new(0, 0, 1, 0) -- width = progress (0 to 1)
+LoadingBar.Parent = LoadingBackground
+
+local LoadingBarCorner = Instance.new("UICorner")
+LoadingBarCorner.CornerRadius = UDim.new(1, 0)
+LoadingBarCorner.Parent = LoadingBar
+
+----------------------------------------------------------------
+-- OfficialMenu + OpenMenu
+----------------------------------------------------------------
+local OfficialMenu_8 = Instance.new("Frame")
+OfficialMenu_8.Name = "OfficialMenu"
+OfficialMenu_8.ZIndex = 10
+OfficialMenu_8.Active = false
+OfficialMenu_8.AnchorPoint = Vector2.new(0.5, 0.5)
+OfficialMenu_8.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+OfficialMenu_8.BorderColor3 = Color3.fromRGB(0, 0, 0)
+OfficialMenu_8.BorderSizePixel = 0
+OfficialMenu_8.ClipsDescendants = false
+OfficialMenu_8.Position = UDim2.new(0.5, 0, 0.034267, 0)
+OfficialMenu_8.Selectable = false
+OfficialMenu_8.SelectionGroup = false
+OfficialMenu_8.Size = UDim2.new(1, 0, 1, 0)
+OfficialMenu_8.Parent = GScript3_1
+
+local UIAspectRatioConstraint_9 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_9.AspectRatio = 25
+UIAspectRatioConstraint_9.Parent = OfficialMenu_8
+
+local UIStroke_10 = Instance.new("UIStroke")
+UIStroke_10.Thickness = 3
+UIStroke_10.Parent = OfficialMenu_8
+
+local UIGradient_11 = Instance.new("UIGradient")
+UIGradient_11.Rotation = -90
+UIGradient_11.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(56, 56, 56)),
+	ColorSequenceKeypoint.new(0.64014, Color3.fromRGB(20, 20, 20)),
+	ColorSequenceKeypoint.new(0.90657, Color3.fromRGB(83, 48, 9)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(86, 49, 8)),
+})
+UIGradient_11.Parent = OfficialMenu_8
+
+local Closebutton_12 = Instance.new("ImageButton")
+Closebutton_12.Name = "Closebutton"
+Closebutton_12.BackgroundTransparency = 1
+Closebutton_12.BorderSizePixel = 0
+Closebutton_12.ClipsDescendants = false
+Closebutton_12.Position = UDim2.new(0.91968, 0, -0.002008, 0)
+Closebutton_12.SelectionGroup = false
+Closebutton_12.Size = UDim2.new(1, 0, 1, 0)
+Closebutton_12.Image = "rbxassetid://108729561525853"
+Closebutton_12.ScaleType = Enum.ScaleType.Fit
+Closebutton_12.Parent = OfficialMenu_8
+
+local UIAspectRatioConstraint_13 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_13.AspectRatio = 2
+UIAspectRatioConstraint_13.Parent = Closebutton_12
+
+local Tabbers_14 = Instance.new("ScrollingFrame")
+Tabbers_14.Name = "Tabbers"
+Tabbers_14.Active = true
+Tabbers_14.AnchorPoint = Vector2.new(0.5, 0.5)
+Tabbers_14.BackgroundTransparency = 1
+Tabbers_14.BorderSizePixel = 0
+Tabbers_14.Position = UDim2.new(0.43976, 0, 0.5, 0)
+Tabbers_14.Size = UDim2.new(1, 0, 1, 0)
+Tabbers_14.CanvasSize = UDim2.new(2, 0, 0, 0)
+Tabbers_14.ScrollBarImageColor3 = Color3.fromRGB(0, 0, 0)
+Tabbers_14.ScrollBarThickness = 1
+Tabbers_14.Parent = OfficialMenu_8
+
+local UIAspectRatioConstraint_15 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_15.AspectRatio = 22
+UIAspectRatioConstraint_15.Parent = Tabbers_14
+
+local Menu_16 = Instance.new("TextButton")
+Menu_16.Name = "Menu"
+Menu_16.AnchorPoint = Vector2.new(0.5, 0.5)
+Menu_16.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Menu_16.BorderSizePixel = 0
+Menu_16.ClipsDescendants = false
+Menu_16.LayoutOrder = 1
+Menu_16.SelectionGroup = false
+Menu_16.Size = UDim2.new(0.05, 0, 0.9, 0)
+Menu_16.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+Menu_16.RichText = false
+Menu_16.TextColor3 = Color3.fromRGB(255, 255, 255)
+Menu_16.TextScaled = true
+Menu_16.Text = "Menu"
+Menu_16.TextSize = 29
+Menu_16.TextWrapped = true
+Menu_16.Parent = Tabbers_14
+
+local UICorner_17 = Instance.new("UICorner")
+UICorner_17.Parent = Menu_16
+
+local UIStroke_18 = Instance.new("UIStroke")
+UIStroke_18.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+UIStroke_18.Color = Color3.fromRGB(255, 255, 255)
+UIStroke_18.Parent = Menu_16
+
+local UIListLayout_19 = Instance.new("UIListLayout")
+UIListLayout_19.FillDirection = Enum.FillDirection.Horizontal
+UIListLayout_19.Padding = UDim.new(0.0025, 0)
+UIListLayout_19.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout_19.VerticalAlignment = Enum.VerticalAlignment.Center
+UIListLayout_19.Wraps = false
+UIListLayout_19.Parent = Tabbers_14
+
+local UIPadding_20 = Instance.new("UIPadding")
+UIPadding_20.PaddingLeft = UDim.new(0, 5)
+UIPadding_20.PaddingRight = UDim.new(0, 5)
+UIPadding_20.PaddingTop = UDim.new(0, 5)
+UIPadding_20.Parent = Tabbers_14
+
+local OpenMenu_21 = Instance.new("ImageButton")
+OpenMenu_21.Name = "OpenMenu"
+OpenMenu_21.ZIndex = 3 -- behind OfficialMenu (ZIndex 10)
+OpenMenu_21.BackgroundTransparency = 1
+OpenMenu_21.BorderSizePixel = 0
+OpenMenu_21.ClipsDescendants = false
+OpenMenu_21.Position = UDim2.new(0.86948, 0, 0.0038924, 0)
+OpenMenu_21.SelectionGroup = false
+OpenMenu_21.Size = UDim2.new(0.066934, 0, 0.095808, 0)
+OpenMenu_21.Image = "rbxassetid://108729561525853"
+OpenMenu_21.ScaleType = Enum.ScaleType.Fit
+OpenMenu_21.Parent = GScript3_1
+
+local UIAspectRatioConstraint_22 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_22.AspectRatio = 2
+UIAspectRatioConstraint_22.Parent = OpenMenu_21
+
+----------------------------------------------------------------
+-- Menu frame (opens from the "Menu" tab button)
+----------------------------------------------------------------
+local FREDOKA = Font.new("rbxasset://fonts/families/FredokaOne.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+
+local Menu_23 = Instance.new("Frame")
+Menu_23.Name = "Menu"
+Menu_23.ZIndex = 5 -- above the intro, below OfficialMenu (10)
+Menu_23.Active = false
+Menu_23.BackgroundColor3 = Color3.fromRGB(255, 247, 239)
+Menu_23.BorderSizePixel = 0
+Menu_23.ClipsDescendants = true
+Menu_23.Position = UDim2.new(0, 0, 0.069087, 0)
+Menu_23.Selectable = false
+Menu_23.SelectionGroup = false
+Menu_23.Size = UDim2.new(0.47523, 0, 0.46311, 0)
+Menu_23.Parent = GScript3_1
+
+local UIAspectRatioConstraint_24 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_24.AspectRatio = 2
+UIAspectRatioConstraint_24.Parent = Menu_23
+
+local UIGradient_25 = Instance.new("UIGradient")
+UIGradient_25.Rotation = 90
+UIGradient_25.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(48, 48, 48)),
+	ColorSequenceKeypoint.new(0.64187, Color3.fromRGB(15, 15, 15)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(125, 71, 10)),
+})
+UIGradient_25.Parent = Menu_23
+
+local UICorner_26 = Instance.new("UICorner")
+UICorner_26.CornerRadius = UDim.new(0, 0)
+UICorner_26.Parent = Menu_23
+
+local UIStroke_27 = Instance.new("UIStroke")
+UIStroke_27.Thickness = 3
+UIStroke_27.Parent = Menu_23
+
+local TextLabel_28 = Instance.new("TextLabel")
+TextLabel_28.Active = false
+TextLabel_28.BackgroundTransparency = 1
+TextLabel_28.BorderSizePixel = 0
+TextLabel_28.Position = UDim2.new(0.043691, 0, 0.047919, 0)
+TextLabel_28.Selectable = false
+TextLabel_28.Size = UDim2.new(0.51711, 0, 0.2, 0)
+TextLabel_28.FontFace = FREDOKA
+TextLabel_28.RichText = false
+TextLabel_28.Text = "Hello, " .. (player and player.Name or "Player") .. "!"
+TextLabel_28.TextColor3 = Color3.fromRGB(255, 255, 255)
+TextLabel_28.TextScaled = true
+TextLabel_28.TextSize = 14
+TextLabel_28.TextWrapped = true
+TextLabel_28.Parent = Menu_23
+
+local Logo_29 = Instance.new("ImageLabel")
+Logo_29.Name = "Logo"
+Logo_29.Active = false
+Logo_29.AnchorPoint = Vector2.new(0.5, 0.5)
+Logo_29.BackgroundTransparency = 1
+Logo_29.BorderSizePixel = 0
+Logo_29.Position = UDim2.new(0.84914, 0, 0.73376, 0)
+Logo_29.Selectable = false
+Logo_29.Size = UDim2.new(0.57973, 0, 1.0242, 0)
+Logo_29.Image = "rbxassetid://125116214888626"
+Logo_29.ScaleType = Enum.ScaleType.Fit
+Logo_29.Parent = Menu_23
+
+local UIAspectRatioConstraint_30 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_30.Parent = Logo_29
+
+local TextLabel_31 = Instance.new("TextLabel")
+TextLabel_31.Active = false
+TextLabel_31.BackgroundTransparency = 1
+TextLabel_31.BorderSizePixel = 0
+TextLabel_31.Position = UDim2.new(0.0056376, 0, 0.31007, 0)
+TextLabel_31.Selectable = false
+TextLabel_31.Size = UDim2.new(0.59886, 0, 0.10134, 0)
+TextLabel_31.FontFace = FREDOKA
+TextLabel_31.RichText = false
+TextLabel_31.Text = "You're using the Version 3.0 (BETA)"
+TextLabel_31.TextColor3 = Color3.fromRGB(255, 255, 255)
+TextLabel_31.TextScaled = true
+TextLabel_31.TextSize = 14
+TextLabel_31.TextWrapped = true
+TextLabel_31.Parent = Menu_23
+
+local List_32 = Instance.new("Frame")
+List_32.Name = "List"
+List_32.Active = false
+List_32.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+List_32.BackgroundTransparency = 0.4
+List_32.BorderSizePixel = 0
+List_32.ClipsDescendants = true
+List_32.Position = UDim2.new(0.042282, 0, 0.50036, 0)
+List_32.Selectable = false
+List_32.Size = UDim2.new(0.57023, 0, 0.46311, 0)
+List_32.Parent = Menu_23
+
+local UIAspectRatioConstraint_33 = Instance.new("UIAspectRatioConstraint")
+UIAspectRatioConstraint_33.AspectRatio = 2
+UIAspectRatioConstraint_33.Parent = List_32
+
+local UIStroke_34 = Instance.new("UIStroke")
+UIStroke_34.Thickness = 3
+UIStroke_34.Parent = List_32
+
+local UIListLayout_36 = Instance.new("UIListLayout")
+UIListLayout_36.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIListLayout_36.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout_36.Wraps = false
+UIListLayout_36.Parent = List_32
+
+-- the "Checker" labels (one per module in MODULES)
+local Checkers = {}
+
+for _, module in ipairs(MODULES) do
+	local Checker = Instance.new("TextLabel")
+	Checker.Name = "Checker"
+	Checker.Active = false
+	Checker.BackgroundTransparency = 1
+	Checker.BorderSizePixel = 0
+	Checker.Size = UDim2.new(0.59886, 0, 0.10134, 0)
+	Checker.FontFace = FREDOKA
+	Checker.RichText = false
+	Checker.Text = module.key .. ": LOADING"
+	Checker.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Checker.TextScaled = true
+	Checker.TextSize = 14
+	Checker.TextWrapped = true
+	Checker.TextXAlignment = Enum.TextXAlignment.Left
+	Checker.Parent = List_32
+	Checkers[module.key] = Checker
+end
+
+local CHECK_COLORS = {
+	ok = Color3.fromRGB(90, 220, 120),
+	soon = Color3.fromRGB(150, 150, 150),
+	fail = Color3.fromRGB(255, 90, 90),
+}
+
+local function SetChecker(key, status, kind)
+	local label = Checkers[key]
+	if not label then return end
+	label.Text = key .. ": " .. status
+	label.TextColor3 = CHECK_COLORS[kind] or Color3.fromRGB(255, 255, 255)
+end
+
+----------------------------------------------------------------
+-- Remember original values
+----------------------------------------------------------------
+local MAIN_SIZE = MainFrame_2.Size
+local MAIN_POS = MainFrame_2.Position
+local LOGO_POS = Logo_6.Position
+local LOAD_POS = LoadingBackground.Position
+local LOAD_TRANSPARENCY = LoadingBackground.BackgroundTransparency
+local MENU_POS = OfficialMenu_8.Position
+local PANEL_POS = Menu_23.Position -- default spot for every panel
+
+local SLIDE = 0.08 -- how far below (scale Y) the items start
+
+----------------------------------------------------------------
+-- Starting state (hidden)
+----------------------------------------------------------------
+MainFrame_2.Size = UDim2.new(0, 0, 0, 0)
+MainFrame_2.Position = UDim2.new(MAIN_POS.X.Scale, 0, MAIN_POS.Y.Scale + 0.15, 0)
+
+Logo_6.ImageTransparency = 1
+Logo_6.Position = UDim2.new(LOGO_POS.X.Scale, 0, LOGO_POS.Y.Scale + SLIDE, 0)
+
+LoadingBackground.BackgroundTransparency = 1
+LoadingBar.BackgroundTransparency = 1
+LoadingBackground.Position = UDim2.new(LOAD_POS.X.Scale, 0, LOAD_POS.Y.Scale + SLIDE, 0)
+
+-- menu starts above the screen, OpenMenu starts hidden + disabled
+OfficialMenu_8.Position = UDim2.new(MENU_POS.X.Scale, 0, -0.15, 0)
+OpenMenu_21.Visible = false
+OpenMenu_21.Interactable = false
+
+-- Menu frame starts above the screen
+Menu_23.Position = UDim2.new(PANEL_POS.X.Scale, PANEL_POS.X.Offset, -0.6, 0)
+
+GScript3_1.Parent = CoreGui
+
+----------------------------------------------------------------
+-- Sequence
+----------------------------------------------------------------
+-- 1) MainFrame: pop up + move up
+local popInfo = TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local mainTween = TweenService:Create(MainFrame_2, popInfo, {
+	Size = MAIN_SIZE,
+	Position = MAIN_POS,
+})
+mainTween:Play()
+mainTween.Completed:Wait()
+
+-- 2) wait 1 second
+task.wait(1)
+
+-- 3) Logo + LoadingBackground: fade in + move up to original positions
+local fadeInfo = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+TweenService:Create(Logo_6, fadeInfo, {
+	ImageTransparency = 0,
+	Position = LOGO_POS,
+}):Play()
+
+TweenService:Create(LoadingBackground, fadeInfo, {
+	BackgroundTransparency = LOAD_TRANSPARENCY,
+	Position = LOAD_POS,
+}):Play()
+
+local barFadeIn = TweenService:Create(LoadingBar, fadeInfo, {
+	BackgroundTransparency = 0,
+})
+barFadeIn:Play()
+barFadeIn.Completed:Wait()
+
+----------------------------------------------------------------
+-- Loading bar
+----------------------------------------------------------------
+local isClosing = false
+
+-- Confetti (drawn BEHIND MainFrame) + sound
+local SOUND_ID = "rbxassetid://109081723292068"
+local SOUND_VOLUME = 0.2 -- lower = quieter (default is 0.5)
+
+local ConfettiHolder = Instance.new("Frame")
+ConfettiHolder.Name = "ConfettiHolder"
+ConfettiHolder.BackgroundTransparency = 1
+ConfettiHolder.BorderSizePixel = 0
+ConfettiHolder.Size = UDim2.new(1, 0, 1, 0)
+ConfettiHolder.ZIndex = 1 -- MainFrame is 2, so this sits behind it
+ConfettiHolder.Parent = GScript3_1
+
+local CONFETTI_COLORS = {
+	Color3.fromRGB(255, 90, 90),
+	Color3.fromRGB(255, 200, 60),
+	Color3.fromRGB(90, 220, 120),
+	Color3.fromRGB(80, 170, 255),
+	Color3.fromRGB(200, 110, 255),
+	Color3.fromRGB(255, 130, 200),
+}
+
+local rng = Random.new()
+
+local function PlayConfetti(amount)
+	for _ = 1, amount do
+		task.spawn(function()
+			local piece = Instance.new("Frame")
+			piece.AnchorPoint = Vector2.new(0.5, 0.5)
+			piece.BackgroundColor3 = CONFETTI_COLORS[rng:NextInteger(1, #CONFETTI_COLORS)]
+			piece.BorderSizePixel = 0
+			piece.Size = UDim2.new(0, rng:NextInteger(6, 10), 0, rng:NextInteger(10, 16))
+			piece.Position = UDim2.new(0.5, 0, 0.5, 0)
+			piece.Rotation = rng:NextInteger(0, 360)
+			piece.ZIndex = 1
+			piece.Parent = ConfettiHolder
+
+			-- burst outward and up
+			local burstX = 0.5 + rng:NextNumber(-0.55, 0.55)
+			local burstY = 0.5 - rng:NextNumber(0.1, 0.5)
+			local burst = TweenService:Create(
+				piece,
+				TweenInfo.new(rng:NextNumber(0.5, 0.8), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{
+					Position = UDim2.new(burstX, 0, burstY, 0),
+					Rotation = piece.Rotation + rng:NextInteger(-360, 360),
+				}
+			)
+			burst:Play()
+			burst.Completed:Wait()
+
+			-- fall down and fade
+			local fall = TweenService:Create(
+				piece,
+				TweenInfo.new(rng:NextNumber(1.2, 1.8), Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{
+					Position = UDim2.new(burstX + rng:NextNumber(-0.1, 0.1), 0, 1.15, 0),
+					Rotation = piece.Rotation + rng:NextInteger(-540, 540),
+					BackgroundTransparency = 1,
+				}
+			)
+			fall:Play()
+			fall.Completed:Wait()
+			piece:Destroy()
+		end)
+	end
+end
+
+local function PlayCompleteSound()
+	local sound = Instance.new("Sound")
+	sound.SoundId = SOUND_ID
+	sound.Volume = SOUND_VOLUME
+	sound.Parent = game:GetService("SoundService") -- so it isn't cut off when the GUI is destroyed
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+	game:GetService("Debris"):AddItem(sound, 15)
+end
+
+----------------------------------------------------------------
+-- Panels. Only one panel is open at a time.
+-- Clicking a tab opens its panel, clicking it again closes it,
+-- clicking another tab swaps between them.
+----------------------------------------------------------------
+local menuInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local panels = {
+	Menu = {
+		frame = Menu_23,
+		shown = PANEL_POS,
+		hidden = UDim2.new(PANEL_POS.X.Scale, PANEL_POS.X.Offset, -0.6, 0),
+	},
+}
+local activePanel = nil
+local panelBusy = false
+
+local function SetPanel(name)
+	if panelBusy then return end
+	if name == activePanel then
+		name = nil -- clicking the open tab closes it
+	end
+	panelBusy = true
+
+	local last
+	if activePanel then
+		local p = panels[activePanel]
+		last = TweenService:Create(p.frame, menuInfo, { Position = p.hidden })
+		last:Play()
+	end
+	if name then
+		local p = panels[name]
+		last = TweenService:Create(p.frame, menuInfo, { Position = p.shown })
+		last:Play()
+	end
+	if last then
+		last.Completed:Wait()
+	end
+
+	activePanel = name
+	panelBusy = false
+end
+
+local function ClosePanels()
+	if not activePanel or panelBusy then return end
+	SetPanel(activePanel) -- same name = close
+end
+
+Menu_16.Activated:Connect(function()
+	SetPanel("Menu")
+end)
+
+-- Menu bar open / close (Closebutton moves it up, OpenMenu brings it back down)
+local MENU_HIDDEN_POS = UDim2.new(MENU_POS.X.Scale, 0, -0.15, 0)
+local menuOpen = false
+local menuBusy = false
+
+local function ShowMenu()
+	if menuOpen or menuBusy then return end
+	menuBusy = true
+	local t = TweenService:Create(OfficialMenu_8, menuInfo, { Position = MENU_POS })
+	t:Play()
+	t.Completed:Wait()
+	menuOpen = true
+	menuBusy = false
+end
+
+local function HideMenu()
+	if not menuOpen or menuBusy then return end
+	menuBusy = true
+	task.spawn(ClosePanels) -- the open panel goes up together with the bar
+	local t = TweenService:Create(OfficialMenu_8, menuInfo, { Position = MENU_HIDDEN_POS })
+	t:Play()
+	t.Completed:Wait()
+	menuOpen = false
+	menuBusy = false
+end
+
+Closebutton_12.Activated:Connect(HideMenu)
+OpenMenu_21.Activated:Connect(ShowMenu)
+
+-- LeftAlt toggles the OfficialMenu open/closed
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	if gameProcessedEvent then return end
+	if input.KeyCode == Enum.KeyCode.LeftAlt then
+		if menuOpen then
+			HideMenu()
+		else
+			ShowMenu()
+		end
+	end
+end)
+
+----------------------------------------------------------------
+-- Shared API for the tab modules
+--   GScript3.AddTab(name, opts) -> panel Frame (already styled, starts hidden)
+--       opts.Size, opts.Position (UDim2), opts.AspectRatio (number)
+--   GScript3.SetChecker(key, status, kind)   kind = "ok" | "soon" | "fail"
+--   GScript3.Track(connection)               disconnected when the GUI is destroyed
+--   GScript3.OnDestroy(function)             runs when the GUI is destroyed
+----------------------------------------------------------------
+local API = {
+	Version = "3.0 BETA",
+	Gui = GScript3_1,
+}
+
+local trackedConnections = {}
+local destroyHandlers = {}
+local tabCount = 0
+
+function API.Track(connection)
+	table.insert(trackedConnections, connection)
+	return connection
+end
+
+function API.OnDestroy(fn)
+	table.insert(destroyHandlers, fn)
+end
+
+function API.SetChecker(key, status, kind)
+	SetChecker(key, status, kind)
+end
+
+function API.AddTab(name, opts)
+	assert(not panels[name], "GScript3: tab '" .. tostring(name) .. "' already exists")
+	opts = opts or {}
+	tabCount = tabCount + 1
+
+	local shown = opts.Position or PANEL_POS
+	local hidden = UDim2.new(shown.X.Scale, shown.X.Offset, -0.6, 0)
+
+	-- tab button (same look as the Menu tab)
+	local tabButton = Menu_16:Clone()
+	tabButton.Name = name
+	tabButton.Text = name
+	tabButton.LayoutOrder = 10 + tabCount
+	tabButton.Parent = Tabbers_14
+
+	-- panel (same look as the Menu frame)
+	local frame = Instance.new("Frame")
+	frame.Name = name .. "Panel"
+	frame.ZIndex = 5
+	frame.Active = false
+	frame.BackgroundColor3 = Color3.fromRGB(255, 247, 239)
+	frame.BorderSizePixel = 0
+	frame.ClipsDescendants = true
+	frame.Selectable = false
+	frame.Size = opts.Size or UDim2.new(0.47523, 0, 0.46311, 0)
+	frame.Position = hidden
+	frame.Parent = GScript3_1
+
+	local ratio = Instance.new("UIAspectRatioConstraint")
+	ratio.AspectRatio = opts.AspectRatio or 2
+	ratio.Parent = frame
+
+	local gradient = Instance.new("UIGradient")
+	gradient.Rotation = 90
+	gradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(48, 48, 48)),
+		ColorSequenceKeypoint.new(0.64187, Color3.fromRGB(15, 15, 15)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(125, 71, 10)),
+	})
+	gradient.Parent = frame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 3
+	stroke.Parent = frame
+
+	panels[name] = { frame = frame, shown = shown, hidden = hidden }
+
+	tabButton.Activated:Connect(function()
+		SetPanel(name)
+	end)
+
+	return frame
+end
+
+Env.GScript3 = API
+
+GScript3_1.Destroying:Connect(function()
+	for _, c in ipairs(trackedConnections) do
+		pcall(function() c:Disconnect() end)
+	end
+	for _, fn in ipairs(destroyHandlers) do
+		pcall(fn)
+	end
+	if Env.GScript3 == API then
+		Env.GScript3 = nil
+	end
+end)
+
+----------------------------------------------------------------
+-- Fade out the intro, then slide the OfficialMenu down and enable OpenMenu
+----------------------------------------------------------------
+local function FadeOutAll()
+	if isClosing then return end
+	isClosing = true
+
+	local outInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	TweenService:Create(LoadingBar, outInfo, { BackgroundTransparency = 1 }):Play()
+	TweenService:Create(LoadingBackground, outInfo, { BackgroundTransparency = 1 }):Play()
+	TweenService:Create(Logo_6, outInfo, { ImageTransparency = 1 }):Play()
+	TweenService:Create(UIStroke_4, outInfo, { Transparency = 1 }):Play()
+
+	local last = TweenService:Create(MainFrame_2, outInfo, { BackgroundTransparency = 1 })
+	last:Play()
+	last.Completed:Wait()
+
+	-- remove the intro pieces (confetti keeps falling a bit, then gets cleaned up)
+	MainFrame_2:Destroy()
+	task.delay(2, function()
+		ConfettiHolder:Destroy()
+	end)
+
+	-- OfficialMenu moves down to its original position
+	ShowMenu()
+
+	-- OpenMenu is now enabled (sits behind OfficialMenu)
+	OpenMenu_21.Visible = true
+	OpenMenu_21.Interactable = true
+end
+
+-- SetProgress(alpha): alpha is 0 to 1. When it reaches 1 the GUI fades out.
+local function SetProgress(alpha)
+	if isClosing then return end
+	alpha = math.clamp(alpha, 0, 1)
+
+	local fill = TweenService:Create(
+		LoadingBar,
+		TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Size = UDim2.new(alpha, 0, 1, 0) }
+	)
+	fill:Play()
+	fill.Completed:Wait()
+
+	if alpha >= 1 then
+		PlayCompleteSound()
+		PlayConfetti(70)
+		task.wait(1.2) -- let the confetti burst show before fading out
+		FadeOutAll()
+	end
+end
+
+----------------------------------------------------------------
+-- Load the modules (each one adds its own tab), updating the Checkers
+----------------------------------------------------------------
+local function fetchModule(file)
+	if PREFER_LOCAL and readfile and isfile and isfile(LOCAL_FOLDER .. file) then
+		return readfile(LOCAL_FOLDER .. file)
+	end
+	return game:HttpGet(BASE_URL .. file .. "?t=" .. os.time())
+end
+
+for i, module in ipairs(MODULES) do
+	task.wait(0.3)
+	if module.file then
+		local ok, err = pcall(function()
+			local fn, compileError = loadstring(fetchModule(module.file))
+			if not fn then
+				error(compileError, 0)
+			end
+			fn()
+		end)
+		if ok then
+			SetChecker(module.key, "LOADED", "ok")
+		else
+			warn("[GScript3] " .. module.key .. " failed to load: " .. tostring(err))
+			SetChecker(module.key, "FAILED", "fail")
+		end
+	else
+		SetChecker(module.key, "SOON", "soon")
+	end
+	SetProgress(i / #MODULES)
+end
