@@ -1,0 +1,1556 @@
+-- ============================================================
+--  Tab_Twisteds.lua  |  GScript v3.0 - Twisteds Tab
+--  Loaded by GScript3.lua (needs the shared GScript3 table)
+--  - Twisteds panel (your Studio layout, unchanged)
+--  - NotifyLatest (spawn notification at the bottom of the screen)
+--  - Map Info + Auto Chat HUD
+-- ============================================================
+
+local Env = (getgenv and getgenv()) or _G
+local API = Env.GScript3
+if not API then
+	warn("[Tab_Twisteds] GScript3 loader not found - run GScript3.lua first")
+	return
+end
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local GUI = API.Gui
+
+-- ============================================================
+--  HELPERS
+-- ============================================================
+local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+
+-- creates an instance, sets its properties, then parents it
+local function make(class, props, parent)
+	local inst = Instance.new(class)
+	for key, value in pairs(props) do
+		inst[key] = value
+	end
+	inst.Parent = parent
+	return inst
+end
+
+local function corner(parent, radius)
+	return make("UICorner", { CornerRadius = UDim.new(0, radius or 8) }, parent)
+end
+
+local function stroke(parent, color, thickness, transparency)
+	return make("UIStroke", {
+		Color = color or Color3.fromRGB(60, 60, 90),
+		Thickness = thickness or 1,
+		Transparency = transparency or 0,
+	}, parent)
+end
+
+local WHITE = Color3.fromRGB(255, 255, 255)
+
+-- ============================================================
+--  TWISTEDS DATA
+--  kind = "main" (pink border) / "event" (light border) / nil (normal)
+-- ============================================================
+local TWISTEDS = {
+	{ name = "Astro",           id = "17615948235",  kind = "main" },
+	{ name = "Bassie",          id = "126888077067126", kind = "event" },
+	{ name = "Blot",            id = "95105136839962" },
+	{ name = "Bobette",         id = "125341856238798" },
+	{ name = "Boxten",          id = "17173327545" },
+	{ name = "Brightney",       id = "17632349232" },
+	{ name = "Brusha",          id = "121361541898971" },
+	{ name = "Coal",            id = "131591684347264" },
+	{ name = "Cocoa",           id = "131621776719456", kind = "event" },
+	{ name = "Connie",          id = "91802161679934" },
+	{ name = "Cosmo",           id = "18673000387" },
+	{ name = "Dandy",           id = "17515073882",  kind = "main" },
+	{ name = "Dyle",            id = "89756984894673", kind = "main" },
+	{ name = "Eclipse",         id = "117268425407246" },
+	{ name = "Eggson",          id = "90676203863684", kind = "event" },
+	{ name = "Finn",            id = "18726780970" },
+	{ name = "Flutter",         id = "18239227410" },
+	{ name = "Flyte",           id = "78483354652017", kind = "event" },
+	{ name = "Gigi",            id = "106223056157959" },
+	{ name = "Ginger",          id = "91212033862550" },
+	{ name = "Glisten",         id = "18818639838" },
+	{ name = "Goob",            id = "17268662964" },
+	{ name = "Gourdy",          id = "77513590902874" },
+	{ name = "Looey",           id = "116451358719686" },
+	{ name = "Pebble",          id = "17011493217",  kind = "main" },
+	{ name = "Poppy",           id = "17011493901" },
+	{ name = "Razzle & Dazzle", id = "17640490166",  keys = { "razzle", "dazzle" } },
+	{ name = "Rebecca",         id = "108943745948703" },
+	{ name = "Rodger",          id = "17105925417" },
+	{ name = "Rudie",           id = "106888954860502" },
+	{ name = "Scraps",          id = "17572307852" },
+	{ name = "Shelly",          id = "18211657552",  kind = "main" },
+	{ name = "Shrimpo",         id = "17583256112" },
+	{ name = "Soulvester",      id = "112352886297624" },
+	{ name = "Sprout",          id = "18688072034",  kind = "main" },
+	{ name = "Squirm",          id = "108443751963686" },
+	{ name = "Teagan",          id = "18194852499" },
+	{ name = "Tisha",           id = "18162886211" },
+	{ name = "Toodles",         id = "17643350074" },
+	{ name = "Vee",             id = "17320166218",  kind = "main" },
+	{ name = "Waxwell",         id = "99884081850470" },
+	{ name = "Yatta",           id = "92678844815201" },
+}
+
+for _, entry in ipairs(TWISTEDS) do
+	entry.keys = entry.keys or { entry.name:lower() }
+end
+
+local FALLBACK_ID = "17288109998"
+
+local function findEntry(objName)
+	local lower = objName:lower()
+	for _, entry in ipairs(TWISTEDS) do
+		for _, key in ipairs(entry.keys) do
+			if lower:find(key, 1, true) then
+				return entry
+			end
+		end
+	end
+	return nil
+end
+
+-- returns displayName ("Twisted X"), headshotId, kind
+local function describe(objName)
+	local entry = findEntry(objName)
+	if entry then
+		return "Twisted " .. entry.name, entry.id, entry.kind
+	end
+	local clean = objName:gsub("[Mm]onster", ""):gsub("^%s+", ""):gsub("%s+$", "")
+	return "Twisted " .. clean, FALLBACK_ID, nil
+end
+
+-- ============================================================
+--  MAP WATCHER
+-- ============================================================
+local currentMap = nil
+
+local function getMap()
+	if currentMap and currentMap.Parent then
+		return currentMap
+	end
+	return nil
+end
+
+local function countItems(match)
+	local map = getMap()
+	if not map then return 0 end
+	local folder = map:FindFirstChild("Items")
+	if not folder then return 0 end
+	local count = 0
+	for _, obj in ipairs(folder:GetChildren()) do
+		if obj.Name:lower():find(match:lower()) then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+-- names of the monsters in the map that have the given kind ("main" / "event")
+local function monstersOfKind(kind)
+	local names = {}
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Monsters")
+	if folder then
+		for _, obj in ipairs(folder:GetChildren()) do
+			local display, _, k = describe(obj.Name)
+			if k == kind then
+				table.insert(names, display)
+			end
+		end
+	end
+	return names
+end
+
+-- ============================================================
+--  TWISTEDS PANEL  (your Studio layout)
+--  Designed at 1588 px wide (the panel is 6.25 : 1), so everything lives in a
+--  "Content" frame of that size and a UIScale fits it to the real panel.
+-- ============================================================
+local REF_W = 1588
+local REF_H = REF_W / 6.25
+
+local panel = API.AddTab("Twisteds", {
+	Size = UDim2.new(0.9972, 0, 0.38231, 0),
+	AspectRatio = 6.25,
+	Position = UDim2.new(0.0012212, 0, 0.076856, 0),
+})
+
+local content = make("Frame", {
+	Name = "Content",
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Size = UDim2.fromOffset(REF_W, REF_H),
+}, panel)
+
+local uiScale = make("UIScale", {}, content)
+local function fitScale()
+	uiScale.Scale = math.max(panel.AbsoluteSize.X / REF_W, 0.05)
+end
+fitScale()
+panel:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitScale)
+
+-- title
+make("TextLabel", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 725, 0, 3),
+	Size = UDim2.new(0.090264, -14, 0.13068, 0),
+	FontFace = FONT,
+	Text = "MONSTER LISTS",
+	TextColor3 = Color3.fromRGB(160, 170, 220),
+	TextSize = 12,
+	TextWrapped = false,
+}, content)
+
+-- list holder
+local listHolder = make("Frame", {
+	BackgroundColor3 = Color3.fromRGB(14, 14, 22),
+	BorderSizePixel = 0,
+	Position = UDim2.new(0.0075962, 0, 0.1405, 0),
+	Size = UDim2.new(0.98457, 0, 0.65151, 0),
+}, content)
+corner(listHolder)
+stroke(listHolder, Color3.fromRGB(45, 45, 70), 1)
+make("UIAspectRatioConstraint", { AspectRatio = 10 }, listHolder)
+
+local listScroll = make("ScrollingFrame", {
+	Active = true,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Position = UDim2.new(0, 4, 0, 4),
+	Size = UDim2.new(1, -8, 1, -8),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ScrollBarImageColor3 = Color3.fromRGB(100, 120, 255),
+	ScrollBarThickness = 3,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+}, listHolder)
+
+make("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 6),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+	Wraps = false,
+}, listScroll)
+
+make("UIPadding", {
+	PaddingLeft = UDim.new(0, 4),
+	PaddingRight = UDim.new(0, 4),
+}, listScroll)
+
+local KIND_STROKE = {
+	main = Color3.fromRGB(255, 0, 180),
+	event = Color3.fromRGB(255, 225, 240),
+}
+local DEFAULT_STROKE = Color3.fromRGB(55, 55, 85)
+
+for i, entry in ipairs(TWISTEDS) do
+	local card = make("Frame", {
+		LayoutOrder = i,
+		BackgroundColor3 = Color3.fromRGB(22, 24, 40),
+		BorderSizePixel = 0,
+		Size = UDim2.new(0, 100, 0, 140),
+	}, listScroll)
+	corner(card, 6)
+	stroke(card, KIND_STROKE[entry.kind] or DEFAULT_STROKE, 1.5)
+
+	local image = make("ImageLabel", {
+		BackgroundColor3 = Color3.fromRGB(14, 14, 22),
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 4, 0, 4),
+		Size = UDim2.new(1, -8, 0, 105),
+		Image = "rbxassetid://" .. entry.id,
+		ScaleType = Enum.ScaleType.Fit,
+	}, card)
+	corner(image, 4)
+
+	make("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 2, 1, -30),
+		Size = UDim2.new(1, -4, 0, 28),
+		FontFace = FONT,
+		Text = entry.name,
+		TextColor3 = Color3.fromRGB(200, 210, 240),
+		TextSize = 11,
+		TextWrapped = true,
+	}, card)
+end
+
+-- Notify Twisteds switch card
+local notifyCard = make("Frame", {
+	LayoutOrder = 9,
+	BackgroundColor3 = Color3.fromRGB(18, 20, 34),
+	BorderSizePixel = 0,
+	Position = UDim2.new(0.016546, 0, 0.81664, 0),
+	Size = UDim2.new(0.13139, -4, 0, 38),
+}, content)
+corner(notifyCard)
+stroke(notifyCard, Color3.fromRGB(45, 45, 70), 1)
+
+local notifyPill = make("Frame", {
+	BackgroundColor3 = Color3.fromRGB(255, 80, 80),
+	BorderSizePixel = 0,
+	Position = UDim2.new(0, 6, 0.5, -9),
+	Size = UDim2.new(0, 4, 0, 18),
+}, notifyCard)
+corner(notifyPill, 3)
+
+local notifySwitch = make("TextButton", {
+	BackgroundColor3 = Color3.fromRGB(40, 40, 65),
+	BorderSizePixel = 0,
+	Position = UDim2.new(1, -42, 0.5, -9),
+	Size = UDim2.new(0, 36, 0, 18),
+	Text = "",
+	AutoButtonColor = false,
+}, notifyCard)
+corner(notifySwitch, 9)
+stroke(notifySwitch, Color3.fromRGB(60, 60, 90), 1)
+
+local notifyKnob = make("Frame", {
+	BackgroundColor3 = Color3.fromRGB(140, 140, 170),
+	BorderSizePixel = 0,
+	Position = UDim2.new(0, 3, 0.5, -6),
+	Size = UDim2.new(0, 12, 0, 12),
+}, notifySwitch)
+corner(notifyKnob, 6)
+
+make("TextLabel", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 0),
+	Size = UDim2.new(1, -58, 1, 0),
+	FontFace = FONT,
+	Text = "🔔 Notify Twisteds",
+	TextColor3 = Color3.fromRGB(210, 215, 235),
+	TextSize = 12,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, notifyCard)
+
+-- HUD button
+local hudButton = make("TextButton", {
+	LayoutOrder = 10,
+	BackgroundColor3 = Color3.fromRGB(40, 60, 120),
+	BorderSizePixel = 0,
+	Position = UDim2.new(0.1584, 0, 0.82042, 0),
+	Size = UDim2.new(0.13783, -4, 0.0033371, 34),
+	FontFace = FONT,
+	Text = "📌 Map Info + Auto Chat HUD",
+	TextColor3 = WHITE,
+	TextSize = 12,
+	TextWrapped = false,
+	AutoButtonColor = false,
+}, content)
+corner(hudButton)
+stroke(hudButton, Color3.fromRGB(80, 80, 120), 1, 0.4)
+make("UIGradient", {
+	Rotation = 90,
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.1, 0),
+		NumberSequenceKeypoint.new(1, 0.3, 0),
+	}),
+}, hudButton)
+
+-- ============================================================
+--  NOTIFYLATEST  (spawn notification at the bottom of the screen)
+--
+--  Sequence:
+--    1. NotifyLatest moves UP to its main position
+--    2. slots 1..N (N = how many Twisteds spawned, max 8) come in one after
+--       another: each image fades in while moving LEFT to its main position
+--    3. wait 3 seconds
+--    4. NotifyLatest moves DOWN to hide
+-- ============================================================
+local SLOT_COUNT   = 8
+local NOTIFY_W     = 630   -- reference size in pixels (scaled to the screen when shown)
+local BAR_H        = 36
+local IMG_W        = 92
+local IMG_H        = 104
+local TUCK         = 8     -- how far the images tuck behind the bar
+local NOTIFY_H     = IMG_H + BAR_H - TUCK
+local SLOT_STEP    = (NOTIFY_W - IMG_W) / (SLOT_COUNT - 1)
+local SLIDE        = 46    -- how far right the images start before moving left
+local IMG_BOTTOM   = (NOTIFY_H - BAR_H + TUCK) / NOTIFY_H -- image bottom edge (scale Y)
+
+local BATCH_WINDOW = 0.6   -- Twisteds spawning within this time share one notification
+local HOLD_TIME    = 3     -- seconds to stay on screen once all images are in
+
+local notifyHolder = make("Frame", {
+	Name = "NotifyLatest",
+	AnchorPoint = Vector2.new(0.5, 1),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ZIndex = 7,
+	Visible = false,
+	Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H),
+	Position = UDim2.new(0.5, 0, 1, NOTIFY_H + 30),
+}, GUI)
+
+-- the images (named 1 - 8), drawn behind the bar
+local notifySlots = {}
+for i = 1, SLOT_COUNT do
+	notifySlots[i] = make("ImageLabel", {
+		Name = tostring(i),
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 1,
+		Visible = false,
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Fit,
+		Size = UDim2.new(IMG_W / NOTIFY_W, 0, IMG_H / NOTIFY_H, 0),
+		Position = UDim2.new(0, 0, IMG_BOTTOM, 0),
+	}, notifyHolder)
+end
+
+-- the bar with the "X SPAWNED!" text
+local notifyBar = make("Frame", {
+	Name = "Bar",
+	AnchorPoint = Vector2.new(0, 1),
+	BackgroundColor3 = WHITE,
+	BorderSizePixel = 0,
+	ZIndex = 2,
+	Position = UDim2.new(0, 0, 1, 0),
+	Size = UDim2.new(1, 0, BAR_H / NOTIFY_H, 0),
+}, notifyHolder)
+corner(notifyBar, 6)
+make("UIStroke", { Thickness = 3 }, notifyBar)
+make("UIGradient", {
+	Rotation = -90,
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(56, 56, 56)),
+		ColorSequenceKeypoint.new(0.64014, Color3.fromRGB(20, 20, 20)),
+		ColorSequenceKeypoint.new(0.90657, Color3.fromRGB(83, 48, 9)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(86, 49, 8)),
+	}),
+}, notifyBar)
+
+local notifyText = make("TextLabel", {
+	Name = "Message",
+	BackgroundTransparency = 1,
+	ZIndex = 3,
+	Position = UDim2.new(0, 8, 0, 2),
+	Size = UDim2.new(1, -16, 1, -4),
+	FontFace = FONT,
+	Text = "",
+	TextColor3 = Color3.fromRGB(110, 125, 255),
+	TextScaled = true,
+	TextStrokeColor3 = Color3.fromRGB(20, 20, 60),
+	TextStrokeTransparency = 0.5,
+	TextWrapped = true,
+}, notifyBar)
+make("UITextSizeConstraint", { MaxTextSize = 26, MinTextSize = 8 }, notifyText)
+
+local notifyEnabled = false
+local notifyToken = 0       -- changes whenever a running notification must stop
+local notified = {}         -- [monster object] = true, so a monster only notifies once
+local pending = {}          -- monsters waiting for the current batch window to end
+local batchWaiting = false
+local queue = {}            -- batches waiting to be shown
+local showing = false
+
+local function notifyScale()
+	local width = GUI.AbsoluteSize.X
+	if width <= 0 then width = 1588 end
+	return math.clamp(width / 1588, 0.5, 1.4)
+end
+
+local function hideNotifyNow()
+	notifyToken = notifyToken + 1
+	if notifyHolder.Visible then
+		local s = notifyScale()
+		local tween = TweenService:Create(notifyHolder, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Position = UDim2.new(0.5, 0, 1, NOTIFY_H * s + 30),
+		})
+		tween:Play()
+		task.delay(0.3, function()
+			if notifyToken and not showing then
+				notifyHolder.Visible = false
+			end
+		end)
+	end
+end
+
+local function playNotification(batch)
+	local token = notifyToken
+	local function alive()
+		return token == notifyToken and notifyEnabled and notifyHolder.Parent ~= nil
+	end
+
+	-- only the monsters that are still in the map
+	local names, ids = {}, {}
+	for _, obj in ipairs(batch) do
+		if obj.Parent then
+			local display, id = describe(obj.Name)
+			table.insert(names, (display:gsub("Twisted ", "")):upper())
+			table.insert(ids, id)
+		end
+	end
+	local count = #names
+	if count == 0 then return end
+
+	-- message
+	local message
+	if count == 1 then
+		message = names[1] .. " SPAWNED!"
+	elseif count <= 3 then
+		message = table.concat(names, ", ") .. " SPAWNED!"
+	else
+		message = names[1] .. ", " .. names[2] .. ", " .. names[3] .. " & " .. (count - 3) .. " MORE SPAWNED!"
+	end
+	notifyText.Text = message
+
+	-- size for this screen + start hidden below the screen
+	local s = notifyScale()
+	notifyHolder.Size = UDim2.fromOffset(NOTIFY_W * s, NOTIFY_H * s)
+	local shownPos = UDim2.new(0.5, 0, 1, -6)
+	local hiddenPos = UDim2.new(0.5, 0, 1, NOTIFY_H * s + 30)
+	notifyHolder.Position = hiddenPos
+
+	-- images: the group is centered, each starts SLIDE px to the right and invisible
+	local groupW = (count - 1) * SLOT_STEP + IMG_W
+	local startX = (NOTIFY_W - groupW) / 2
+	local mainX = {}
+	for i = 1, SLOT_COUNT do
+		local slot = notifySlots[i]
+		if i <= count then
+			mainX[i] = (startX + (i - 1) * SLOT_STEP) / NOTIFY_W
+			slot.Image = "rbxassetid://" .. ids[i]
+			slot.ImageTransparency = 1
+			slot.Position = UDim2.new(mainX[i] + SLIDE / NOTIFY_W, 0, IMG_BOTTOM, 0)
+			slot.Visible = true
+		else
+			slot.Visible = false
+		end
+	end
+	notifyHolder.Visible = true
+
+	-- 1) NotifyLatest moves up to its main position
+	TweenService:Create(notifyHolder, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Position = shownPos,
+	}):Play()
+	task.wait(0.5)
+	if not alive() then return end
+
+	-- 2) images 1..N: fade in while moving left to their main position
+	for i = 1, count do
+		TweenService:Create(notifySlots[i], TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			ImageTransparency = 0,
+			Position = UDim2.new(mainX[i], 0, IMG_BOTTOM, 0),
+		}):Play()
+		task.wait(0.12)
+		if not alive() then return end
+	end
+	task.wait(0.35) -- let the last image finish
+
+	-- 3) wait 3 seconds
+	task.wait(HOLD_TIME)
+	if not alive() then return end
+
+	-- 4) NotifyLatest moves down to hide
+	TweenService:Create(notifyHolder, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Position = hiddenPos,
+	}):Play()
+	task.wait(0.45)
+end
+
+local function processQueue()
+	if showing then return end
+	showing = true
+	task.spawn(function()
+		while #queue > 0 and notifyEnabled do
+			local batch = table.remove(queue, 1)
+			playNotification(batch)
+			task.wait(0.15)
+		end
+		showing = false
+		if not notifyEnabled or #queue == 0 then
+			notifyHolder.Visible = false
+		end
+	end)
+end
+
+-- a monster spawned: collect everything spawning close together into one batch
+local function queueMonster(obj)
+	if notified[obj] then return end
+	notified[obj] = true
+	table.insert(pending, obj)
+	if batchWaiting then return end
+	batchWaiting = true
+	task.delay(BATCH_WINDOW, function()
+		batchWaiting = false
+		local all = pending
+		pending = {}
+		-- max 8 images per notification, extra Twisteds get their own one
+		for first = 1, #all, SLOT_COUNT do
+			local batch = {}
+			for i = first, math.min(first + SLOT_COUNT - 1, #all) do
+				table.insert(batch, all[i])
+			end
+			table.insert(queue, batch)
+		end
+		if notifyEnabled then
+			processQueue()
+		end
+	end)
+end
+
+local function queueCurrentMonsters()
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Monsters")
+	if not folder then return end
+	for _, obj in ipairs(folder:GetChildren()) do
+		queueMonster(obj)
+	end
+end
+
+local monstersConnection = nil
+
+local function watchMonsters(map)
+	if monstersConnection then
+		monstersConnection:Disconnect()
+		monstersConnection = nil
+	end
+	notified = {}
+	pending = {}
+	queue = {}
+
+	task.spawn(function()
+		local folder = map:FindFirstChild("Monsters") or map:WaitForChild("Monsters", 15)
+		if not folder or currentMap ~= map then return end
+		monstersConnection = API.Track(folder.ChildAdded:Connect(function(child)
+			if notifyEnabled then
+				task.wait(0.2)
+				queueMonster(child)
+			end
+		end))
+		if notifyEnabled then
+			queueCurrentMonsters()
+		end
+	end)
+end
+
+local function setupMapWatcher()
+	local room = workspace:FindFirstChild("CurrentRoom") or workspace:WaitForChild("CurrentRoom", 30)
+	if not room then return end
+
+	for _, child in ipairs(room:GetChildren()) do
+		if child:IsA("Model") then
+			currentMap = child
+			watchMonsters(child)
+			break
+		end
+	end
+
+	API.Track(room.ChildAdded:Connect(function(child)
+		if child:IsA("Model") then
+			task.wait(0.3)
+			currentMap = child
+			watchMonsters(child)
+		end
+	end))
+
+	API.Track(room.ChildRemoved:Connect(function()
+		currentMap = nil
+		notified, pending, queue = {}, {}, {}
+		hideNotifyNow()
+	end))
+end
+
+-- Notify Twisteds switch
+local NOTIFY_TWEEN = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function refreshNotifySwitch()
+	if notifyEnabled then
+		TweenService:Create(notifySwitch, NOTIFY_TWEEN, { BackgroundColor3 = Color3.fromRGB(60, 160, 255) }):Play()
+		TweenService:Create(notifyKnob, NOTIFY_TWEEN, { Position = UDim2.new(0, 21, 0.5, -6), BackgroundColor3 = WHITE }):Play()
+		TweenService:Create(notifyCard, NOTIFY_TWEEN, { BackgroundColor3 = Color3.fromRGB(16, 26, 48) }):Play()
+	else
+		TweenService:Create(notifySwitch, NOTIFY_TWEEN, { BackgroundColor3 = Color3.fromRGB(40, 40, 65) }):Play()
+		TweenService:Create(notifyKnob, NOTIFY_TWEEN, { Position = UDim2.new(0, 3, 0.5, -6), BackgroundColor3 = Color3.fromRGB(140, 140, 170) }):Play()
+		TweenService:Create(notifyCard, NOTIFY_TWEEN, { BackgroundColor3 = Color3.fromRGB(18, 20, 34) }):Play()
+	end
+end
+
+notifySwitch.MouseButton1Click:Connect(function()
+	notifyEnabled = not notifyEnabled
+	refreshNotifySwitch()
+	if notifyEnabled then
+		queueCurrentMonsters() -- Twisteds already in the map notify once
+	else
+		queue, pending = {}, {}
+		hideNotifyNow()
+	end
+end)
+refreshNotifySwitch()
+
+-- ============================================================
+--  CHAT
+-- ============================================================
+local function sendChat(msg)
+	local ok = pcall(function()
+		local events = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+		if not events then error("no legacy chat") end
+		local say = events:FindFirstChild("SayMessageRequest")
+		if not say then error("no legacy chat") end
+		say:FireServer(msg, "All")
+	end)
+	if ok then return end
+	pcall(function()
+		local channel = game:GetService("TextChatService").TextChannels:WaitForChild("RBXGeneral", 1)
+		if channel then channel:SendAsync(msg) end
+	end)
+end
+
+local function chatList(kind, label)
+	local names = monstersOfKind(kind)
+	if #names == 0 then
+		sendChat("No " .. label .. " Twisteds in the Map.")
+	else
+		sendChat("Theres " .. table.concat(names, ", ") .. " In the Map!")
+	end
+end
+
+-- ============================================================
+--  MAP INFO + AUTO CHAT HUD
+-- ============================================================
+local latestHud         = nil
+local medkitAmountLbl   = nil
+local bandageAmountLbl  = nil
+local twistedAmountLbl  = nil
+local monsterDetectorSF = nil
+local playerDetectorSF  = nil
+local infoHudVisible    = false
+local detectorMode      = "monsters" -- "monsters" or "players"
+
+local CARD_W, CARD_H = 60, 88
+
+local detectorRainbowStrokes = {}
+local detectorPinkStrokes    = {}
+local playerHpConnections    = {}
+
+-- ---------- monster tracker (follows a monster on screen) ----------
+local activeTrackers = {} -- { obj, frame, conn }
+
+local function destroyTracker(entry)
+	pcall(function() entry.frame:Destroy() end)
+	pcall(function() entry.conn:Disconnect() end)
+end
+
+local function clearAllTrackers()
+	for _, entry in ipairs(activeTrackers) do destroyTracker(entry) end
+	activeTrackers = {}
+end
+
+local function buildTrackerUI(obj, headshotId, displayName)
+	-- click again = stop tracking
+	for i, entry in ipairs(activeTrackers) do
+		if entry.obj == obj then
+			destroyTracker(entry)
+			table.remove(activeTrackers, i)
+			return
+		end
+	end
+
+	local camera = workspace.CurrentCamera
+	local root = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("BasePart")
+	local startX, startY = 0.5, 0.5
+	if root and camera then
+		local viewport = camera.ViewportSize
+		local point = camera:WorldToViewportPoint(root.Position + Vector3.new(0, 4, 0))
+		startX = math.clamp(point.X / viewport.X, 0.05, 0.92)
+		startY = math.clamp(point.Y / viewport.Y, 0.05, 0.88)
+	end
+
+	local tracker = make("Frame", {
+		Name = "MonsterTracker",
+		Size = UDim2.new(0, 76, 0, 86),
+		AnchorPoint = Vector2.new(0.5, 1),
+		BackgroundColor3 = Color3.fromRGB(14, 14, 22),
+		BackgroundTransparency = 0.1,
+		BorderSizePixel = 0,
+		ZIndex = 200,
+		Position = UDim2.new(startX, 0, startY - 0.06, 0),
+	}, GUI)
+	corner(tracker, 8)
+	stroke(tracker, Color3.fromRGB(100, 120, 255), 1.5)
+	make("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 20, 36)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 12, 22)),
+		}),
+		Rotation = 90,
+	}, tracker)
+
+	local image = make("ImageLabel", {
+		Size = UDim2.new(0, 58, 0, 58),
+		Position = UDim2.new(0.5, -29, 0, 5),
+		BackgroundColor3 = Color3.fromRGB(10, 10, 20),
+		BorderSizePixel = 0,
+		ZIndex = 201,
+		Image = "rbxassetid://" .. headshotId,
+		ScaleType = Enum.ScaleType.Fit,
+	}, tracker)
+	corner(image, 6)
+
+	make("TextLabel", {
+		Size = UDim2.new(1, -4, 0, 16),
+		Position = UDim2.new(0, 2, 1, -18),
+		BackgroundTransparency = 1,
+		ZIndex = 201,
+		Font = Enum.Font.FredokaOne,
+		TextSize = 10,
+		TextColor3 = Color3.fromRGB(220, 225, 255),
+		TextStrokeTransparency = 0,
+		TextWrapped = true,
+		Text = (displayName:gsub("Twisted ", "")),
+	}, tracker)
+
+	make("TextLabel", {
+		Size = UDim2.new(0, 20, 0, 14),
+		Position = UDim2.new(0.5, -10, 1, 2),
+		BackgroundTransparency = 1,
+		ZIndex = 201,
+		Font = Enum.Font.FredokaOne,
+		TextSize = 12,
+		TextColor3 = Color3.fromRGB(100, 120, 255),
+		Text = "▼",
+	}, tracker)
+
+	TweenService:Create(tracker, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.new(startX, 0, startY, 0),
+	}):Play()
+
+	local entry = { obj = obj, frame = tracker }
+	entry.conn = RunService.Heartbeat:Connect(function()
+		-- the monster is gone: remove the tracker
+		if not obj or not obj.Parent then
+			destroyTracker(entry)
+			for i, e in ipairs(activeTrackers) do
+				if e == entry then table.remove(activeTrackers, i); break end
+			end
+			return
+		end
+		local cam = workspace.CurrentCamera
+		local r = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("BasePart")
+		if not r or not cam then return end
+		local viewport = cam.ViewportSize
+		local point = cam:WorldToViewportPoint(r.Position + Vector3.new(0, 4, 0))
+		tracker.Position = UDim2.new(
+			math.clamp(point.X / viewport.X, 0.05, 0.92), 0,
+			math.clamp(point.Y / viewport.Y, 0.05, 0.88), 0)
+	end)
+	table.insert(activeTrackers, entry)
+end
+
+-- ---------- monster detector ----------
+local function monsterSignature()
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Monsters")
+	if not folder then return "" end
+	local names = {}
+	for _, obj in ipairs(folder:GetChildren()) do
+		table.insert(names, obj.Name)
+	end
+	return table.concat(names, "|")
+end
+
+local lastMonsterSig = nil
+
+-- one card in the detectors: its height fills the detector, the aspect ratio sets the width
+local function makeDetectorCard(parent, order, color)
+	local card = make("Frame", {
+		LayoutOrder = order,
+		BackgroundColor3 = color,
+		BorderSizePixel = 0,
+		-- full size: the aspect ratio constraint below shrinks it to the right shape
+		Size = UDim2.new(1, 0, 1, 0),
+	}, parent)
+	corner(card, 6)
+	make("UIAspectRatioConstraint", {
+		AspectRatio = CARD_W / CARD_H,
+		DominantAxis = Enum.DominantAxis.Height,
+	}, card)
+	make("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, color),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 14, 22)),
+		}),
+		Rotation = 90,
+	}, card)
+	return card
+end
+
+local function makeCardLabel(props, parent)
+	local maxSize = props.MaxTextSize or 9
+	props.MaxTextSize = nil
+	props.BackgroundTransparency = 1
+	props.ZIndex = 10
+	props.Font = Enum.Font.FredokaOne
+	props.TextScaled = true
+	props.TextWrapped = true
+	local label = make("TextLabel", props, parent)
+	make("UITextSizeConstraint", { MaxTextSize = maxSize, MinTextSize = 4 }, label)
+	return label
+end
+
+local function rebuildMonsterDetector()
+	if not monsterDetectorSF then return end
+	lastMonsterSig = monsterSignature()
+
+	for _, child in ipairs(monsterDetectorSF:GetChildren()) do
+		if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+			child:Destroy()
+		end
+	end
+	detectorRainbowStrokes = {}
+	detectorPinkStrokes = {}
+
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Monsters")
+	if not folder or #folder:GetChildren() == 0 then return end
+
+	for i, obj in ipairs(folder:GetChildren()) do
+		local displayName, headshotId, kind = describe(obj.Name)
+		local baseColor
+		if kind == "main" then baseColor = Color3.fromRGB(30, 18, 48)
+		elseif kind == "event" then baseColor = Color3.fromRGB(48, 18, 36)
+		else baseColor = Color3.fromRGB(26, 28, 44) end
+
+		local card = makeDetectorCard(monsterDetectorSF, i, baseColor)
+
+		local cardStroke = stroke(card, DEFAULT_STROKE, 1.5)
+		if kind == "main" then
+			cardStroke.Color = Color3.fromRGB(255, 0, 0)
+			table.insert(detectorRainbowStrokes, cardStroke)
+		elseif kind == "event" then
+			cardStroke.Color = Color3.fromRGB(255, 105, 180)
+			table.insert(detectorPinkStrokes, cardStroke)
+		end
+
+		local image = make("ImageLabel", {
+			Position = UDim2.new(0.083, 0, 0.045, 0),
+			Size = UDim2.new(0.833, 0, 0.6, 0),
+			BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+			BorderSizePixel = 0,
+			ZIndex = 10,
+			Image = "rbxassetid://" .. headshotId,
+			ScaleType = Enum.ScaleType.Fit,
+		}, card)
+		corner(image, 4)
+
+		makeCardLabel({
+			Position = UDim2.new(0, 1, 0.66, 0),
+			Size = UDim2.new(1, -2, 0.32, 0),
+			TextColor3 = Color3.fromRGB(220, 225, 255),
+			TextStrokeTransparency = 0.5,
+			Text = (displayName:gsub("Twisted ", "")),
+			MaxTextSize = 9,
+		}, card)
+
+		local clickButton = make("TextButton", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = "",
+			ZIndex = 20,
+			AutoButtonColor = false,
+		}, card)
+
+		local tracked = false
+		clickButton.MouseButton1Click:Connect(function()
+			tracked = not tracked
+			TweenService:Create(card, TweenInfo.new(0.15), {
+				BackgroundColor3 = tracked and Color3.fromRGB(30, 50, 90) or baseColor,
+			}):Play()
+			buildTrackerUI(obj, headshotId, displayName)
+		end)
+	end
+end
+
+-- ---------- toon headshots (players) ----------
+local TOON_HEADSHOTS = {
+	Astro = "17476673323", Bassie = "96195017694730", Blot = "104323857339769",
+	Bobette = "79977174778992", Boxten = "16987982359", Brightney = "17261224750",
+	Brusha = "81392832907739", Coal = "130568522739863", Cocoa = "96689448192352",
+	Connie = "133764935822586", Cosmo = "18595002771", Eclipse = "82081910592748",
+	Eggson = "136905973436564", Finn = "118315386021284", Flutter = "18225864350",
+	Flyte = "82095952372356", Gigi = "91815485180492", Ginger = "87154471381383",
+	Glisten = "18787102103", Goob = "17231084415", Gourdy = "99809413682710",
+	Looey = "79162966797011", Pebble = "16882259119", Poppy = "16882258451",
+	["Razzle and Dazzle"] = "17450142263", Rebecca = "94294630559443",
+	Rodger = "17095240566", Rudie = "72865471267749", Scraps = "17552138553",
+	Shelly = "18199050281", Shrimpo = "17560978429", Soulvester = "77290390868770",
+	Sprout = "99825183109033", Squirm = "126346931597430", Teagan = "18183438182",
+	Tisha = "137805772937013", Toodles = "17504379605", Vee = "17288109998",
+	Waxwell = "109938376189951", Yatta = "138352430225674",
+}
+
+local function getToonHeadshot(charName)
+	if not charName or charName == "" then return FALLBACK_ID end
+	if TOON_HEADSHOTS[charName] then return TOON_HEADSHOTS[charName] end
+	local lower = charName:lower()
+	for name, id in pairs(TOON_HEADSHOTS) do
+		if lower:find(name:lower(), 1, true) then return id end
+	end
+	return FALLBACK_ID
+end
+
+local function getPlayerCharName(playerModel)
+	local config = playerModel:FindFirstChild("Config")
+	local nameValue = config and config:FindFirstChild("CharacterName")
+	if not nameValue or nameValue.Value == "" then return "Unknown" end
+	return nameValue.Value
+end
+
+local function getHealthColor(hp, maxHp)
+	if maxHp <= 0 or hp <= 0 then return Color3.fromRGB(10, 10, 10) end -- dead
+	if maxHp >= 4 then
+		if hp >= 4 then return Color3.fromRGB(60, 160, 220)      -- light blue
+		elseif hp >= 3 then return Color3.fromRGB(30, 130, 50)   -- green
+		else return Color3.fromRGB(180, 40, 40) end              -- red
+	elseif maxHp == 3 then
+		if hp >= 3 then return Color3.fromRGB(30, 130, 50)
+		elseif hp >= 2 then return Color3.fromRGB(200, 170, 20)  -- yellow
+		else return Color3.fromRGB(180, 40, 40) end
+	else
+		if hp >= 2 then return Color3.fromRGB(30, 130, 50)
+		else return Color3.fromRGB(180, 40, 40) end
+	end
+end
+
+-- ---------- player detector ----------
+local function playerSignature()
+	local folder = workspace:FindFirstChild("InGamePlayers")
+	if not folder then return "" end
+	local names = {}
+	for _, model in ipairs(folder:GetChildren()) do
+		table.insert(names, model.Name)
+	end
+	return table.concat(names, "|")
+end
+
+local lastPlayerSig = nil
+
+local function rebuildPlayerDetector()
+	if not playerDetectorSF then return end
+	lastPlayerSig = playerSignature()
+
+	for _, child in ipairs(playerDetectorSF:GetChildren()) do
+		if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+			child:Destroy()
+		end
+	end
+	for _, conn in ipairs(playerHpConnections) do pcall(function() conn:Disconnect() end) end
+	playerHpConnections = {}
+
+	local folder = workspace:FindFirstChild("InGamePlayers")
+	if not folder then return end
+
+	for i, model in ipairs(folder:GetChildren()) do
+		local charName = getPlayerCharName(model)
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		local hp = hum and hum.Health or 0
+		local maxHp = hum and hum.MaxHealth or 4
+		local headshotId = getToonHeadshot(charName)
+		local hpColor = getHealthColor(hp, maxHp)
+
+		local displayName = charName
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr.Name == model.Name or plr.DisplayName == model.Name then
+				displayName = plr.DisplayName
+				break
+			end
+		end
+
+		local card = makeDetectorCard(playerDetectorSF, i, hpColor)
+		local cardGradient = card:FindFirstChildOfClass("UIGradient")
+		local cardStroke = stroke(card, hpColor, 1.5)
+
+		local image = make("ImageLabel", {
+			Position = UDim2.new(0.083, 0, 0.04, 0),
+			Size = UDim2.new(0.833, 0, 0.5, 0),
+			BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+			BorderSizePixel = 0,
+			ZIndex = 10,
+			Image = "rbxassetid://" .. headshotId,
+			ScaleType = Enum.ScaleType.Fit,
+		}, card)
+		corner(image, 4)
+
+		makeCardLabel({
+			Position = UDim2.new(0, 1, 0.55, 0), Size = UDim2.new(1, -2, 0.15, 0),
+			TextColor3 = Color3.fromRGB(180, 220, 255), TextStrokeTransparency = 0.5,
+			Text = charName, MaxTextSize = 8,
+		}, card)
+
+		makeCardLabel({
+			Position = UDim2.new(0, 1, 0.70, 0), Size = UDim2.new(1, -2, 0.13, 0),
+			TextColor3 = Color3.fromRGB(160, 160, 200), TextStrokeTransparency = 0.7,
+			Text = "@" .. displayName, MaxTextSize = 7,
+		}, card)
+
+		local hearts = math.max(0, math.floor(hp))
+		local hpLabel = makeCardLabel({
+			Position = UDim2.new(0, 1, 0.83, 0), Size = UDim2.new(1, -2, 0.15, 0),
+			TextColor3 = hpColor, TextStrokeTransparency = 1,
+			Text = string.rep("♥", hearts) .. string.rep("♡", math.max(0, maxHp - hearts)),
+			MaxTextSize = 8,
+		}, card)
+
+		local function animateDeath()
+			TweenService:Create(card, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				BackgroundColor3 = Color3.fromRGB(5, 5, 5),
+			}):Play()
+			TweenService:Create(image, TweenInfo.new(0.4), {
+				ImageTransparency = 1,
+				BackgroundColor3 = Color3.fromRGB(5, 5, 5),
+			}):Play()
+			task.delay(0.5, function()
+				pcall(function() card:Destroy() end)
+			end)
+		end
+
+		if hum then
+			table.insert(playerHpConnections, hum:GetPropertyChangedSignal("Health"):Connect(function()
+				if hum.Health <= 0 then
+					pcall(animateDeath)
+					return
+				end
+				local color = getHealthColor(hum.Health, hum.MaxHealth)
+				local full = math.max(0, math.floor(hum.Health))
+				pcall(function()
+					cardStroke.Color = color
+					hpLabel.TextColor3 = color
+					hpLabel.Text = string.rep("♥", full) .. string.rep("♡", math.max(0, hum.MaxHealth - full))
+					cardGradient.Color = ColorSequence.new({
+						ColorSequenceKeypoint.new(0, color),
+						ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 14, 22)),
+					})
+				end)
+			end))
+		end
+
+		model.AncestryChanged:Connect(function(_, parent)
+			if parent == nil then pcall(animateDeath) end
+		end)
+
+		local clickButton = make("TextButton", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = "",
+			ZIndex = 20,
+			AutoButtonColor = false,
+		}, card)
+
+		local tracked = false
+		clickButton.MouseButton1Click:Connect(function()
+			tracked = not tracked
+			TweenService:Create(card, TweenInfo.new(0.15), {
+				BackgroundColor3 = tracked and Color3.fromRGB(20, 50, 80) or hpColor,
+			}):Play()
+			buildTrackerUI(model, headshotId, charName)
+		end)
+	end
+end
+
+-- ---------- auto chat buttons (edit this table to change / add buttons) ----------
+-- text   = button label
+-- chat   = message sent to chat
+-- fn     = function that builds the message instead (for buttons that count things in the map)
+-- locked = greyed out, does nothing
+local function countMatching(pattern)
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Items")
+	if not folder then return 0 end
+	local count = 0
+	for _, obj in ipairs(folder:GetChildren()) do
+		if obj.Name:match(pattern) then count = count + 1 end
+	end
+	return count
+end
+
+-- entries = { { "Box of Chocolate", 2 }, { "Pop", 0 } } -> "Theres 2 Box of Chocolate in the Map!"
+local function chatItemCounts(entries, noneText)
+	local parts = {}
+	for _, entry in ipairs(entries) do
+		if entry[2] > 0 then
+			table.insert(parts, entry[2] .. " " .. entry[1])
+		end
+	end
+	if #parts == 0 then
+		sendChat(noneText)
+	else
+		sendChat("Theres " .. table.concat(parts, " and ") .. " in the Map!")
+	end
+end
+
+local function chatGoobScraps()
+	local hasGoob, hasScraps = false, false
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Monsters")
+	if folder then
+		for _, obj in ipairs(folder:GetChildren()) do
+			local lower = obj.Name:lower()
+			if lower:find("goob") then hasGoob = true end
+			if lower:find("scraps") then hasScraps = true end
+		end
+	end
+	if hasGoob and hasScraps then sendChat("Theres Goob and Scraps in the Map.")
+	elseif hasGoob then sendChat("Theres Goob in the Map.")
+	elseif hasScraps then sendChat("Theres Scraps in the Map.")
+	else sendChat("No Goob or Scraps in the Map.") end
+end
+
+local AUTOCHAT_BUTTONS = {
+	{ text = "GTE",            chat = "GTE! Get to the Elevator!" },
+	{ text = "EAE",            chat = "EAE! Everyone at the Elevator!" },
+	{ text = "I'll distract",  chat = "I'll distract the Twisted!" },
+	{ text = "It's okay",      chat = "It's okay, keep going!" },
+	{ text = "Last Heart",     chat = "A Toon is on their Last Heart!!" },
+	{ text = "Your Turn",      chat = "Your turn!" },
+	{ text = "How many Tapes", chat = "How many Tapes do you have?" },
+	{ text = "Box of Choc & Pop", fn = function()
+		chatItemCounts({
+			{ "Box of Chocolate", countItems("BoxOfChocolate") },
+			{ "Pop", countMatching("^Pop$") },
+		}, "No Box of Chocolate and Pop in the Map.")
+	end },
+	{ text = "JumperCable & Valve", fn = function()
+		chatItemCounts({
+			{ "JumperCable", countItems("JumperCable") },
+			{ "Valve", countItems("Valve") },
+		}, "No JumperCable and Valve in the Map.")
+	end },
+	{ text = "SmokeBomb", fn = function()
+		chatItemCounts({ { "SmokeBomb", countItems("SmokeBomb") } }, "No SmokeBomb in the Map.")
+	end },
+	{ text = "Research Capsule", fn = function()
+		chatItemCounts({ { "Research Capsule", countItems("ResearchCapsule") } }, "No Research Capsule in the Map.")
+	end },
+	{ text = "Event Twisteds", locked = true },
+	-- kept from the old HUD:
+	{ text = "Main Twisteds",  fn = function() chatList("main", "Main") end },
+	{ text = "Bandages",       fn = function()
+		local n = countItems("Bandage")
+		sendChat(n > 0 and ("Theres " .. n .. " Bandage in the Map!") or "No Bandages in the Map.")
+	end },
+	{ text = "Medkit",         fn = function()
+		local n = countItems("HealthKit")
+		sendChat(n > 0 and ("Theres " .. n .. " Medkit in the Map!") or "No Medkits in the Map.")
+	end },
+	{ text = "Goob or Scraps", fn = chatGoobScraps },
+}
+
+-- ---------- the HUD itself (your LatestHUD design) ----------
+local function countMonsters()
+	local map = getMap()
+	local folder = map and map:FindFirstChild("Monsters")
+	return folder and #folder:GetChildren() or 0
+end
+
+local HUD_GRADIENT = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(48, 48, 48)),
+	ColorSequenceKeypoint.new(0.64187, Color3.fromRGB(15, 15, 15)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(125, 71, 10)),
+})
+
+local function buildLatestHud()
+	if latestHud then
+		infoHudVisible = not infoHudVisible
+		latestHud.Visible = infoHudVisible
+		return
+	end
+
+	latestHud = make("Frame", {
+		Name = "LatestHUD",
+		Active = true,
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+		ClipsDescendants = false,
+		Position = UDim2.new(0.78225, 0, 0.69878, 0),
+		Size = UDim2.new(0.21584, 0, 0.14179, 0),
+		ZIndex = 8,
+	}, GUI)
+	make("UIStroke", { Thickness = 3 }, latestHud)
+	make("UIGradient", { Rotation = 90, Color = HUD_GRADIENT }, latestHud)
+	corner(latestHud, 5)
+	make("UIAspectRatioConstraint", { AspectRatio = 4 }, latestHud)
+
+	-- monster / player detectors (horizontal scroll)
+	local function makeDetector(name, visible)
+		local sf = make("ScrollingFrame", {
+			Name = name,
+			Active = true,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = Color3.fromRGB(12, 11, 26),
+			BackgroundTransparency = 0.7,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0.5, 0, 0.5, 0),
+			Size = UDim2.new(0.9877, 0, 0.76992, 0),
+			AutomaticCanvasSize = Enum.AutomaticSize.X,
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+			ScrollBarThickness = 1,
+			ScrollingDirection = Enum.ScrollingDirection.X,
+			Visible = visible,
+		}, latestHud)
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 4),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Wraps = false,
+		}, sf)
+		make("UIPadding", {
+			PaddingBottom = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4),
+			PaddingRight = UDim.new(0, 4), PaddingTop = UDim.new(0, 4),
+		}, sf)
+		return sf
+	end
+	monsterDetectorSF = makeDetector("MonsterDetector", true)
+	playerDetectorSF = makeDetector("PlayerDetector", false)
+
+	-- item / twisted counters (the strip above, as in your design)
+	local itemStrip = make("Frame", {
+		Name = "ItemDetector",
+		Active = false,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.new(-1.3069, 0, -4.4984, 0),
+		Size = UDim2.new(2.555, 0, 0.70825, 0),
+	}, latestHud)
+	make("UIAspectRatioConstraint", { AspectRatio = 30 }, itemStrip)
+
+	local function stripLabel(name, x, y, w, text, color, strokeColor, alignLeft)
+		local props = {
+			Name = name,
+			ZIndex = 4,
+			Active = false,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			Position = UDim2.new(x, 0, y, 0),
+			Size = UDim2.new(w, 0, 0.631, 0),
+			FontFace = FONT,
+			Text = text,
+			TextColor3 = color,
+			TextScaled = true,
+			TextStrokeTransparency = 0,
+			TextWrapped = true,
+		}
+		if strokeColor then props.TextStrokeColor3 = strokeColor end
+		if alignLeft then props.TextXAlignment = Enum.TextXAlignment.Left end
+		return make("TextLabel", props, itemStrip)
+	end
+
+	stripLabel("MedkitName", 0.076575, 0.48771, 0.13609, "MEDKIT:", WHITE)
+	medkitAmountLbl = stripLabel("MedkitAmount", 0.14968, 0.5, 0.061672, "0", WHITE, nil, true)
+	stripLabel("BandageName", 0.24899, 0.5, 0.136, "BANDAGE:", Color3.fromRGB(39, 251, 255), Color3.fromRGB(27, 80, 130))
+	bandageAmountLbl = stripLabel("BandageAmount", 0.32349, 0.5, 0.048609, "0", WHITE, nil, true)
+	stripLabel("TwistedName", 0.83752, 0.5, 0.136, "TWISTEDS:", Color3.fromRGB(0, 0, 0), Color3.fromRGB(130, 0, 0))
+	twistedAmountLbl = stripLabel("TwistedAmount", 0.91446, 0.5, 0.048609, "0", WHITE, nil, true)
+
+	-- auto chat panel: opens ABOVE the tab buttons (the HUD sits at the bottom of the screen)
+	local autoChatPanel = make("Frame", {
+		Name = "AutoChat",
+		AnchorPoint = Vector2.new(0.5, 1),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+		ZIndex = 2,
+		Visible = false,
+		Position = UDim2.new(0.5, 0, -0.32, 0),
+		Size = UDim2.new(1, 0, 1.9, 0),
+	}, latestHud)
+	make("UIStroke", { Thickness = 3 }, autoChatPanel)
+	make("UIGradient", { Rotation = 90, Color = HUD_GRADIENT }, autoChatPanel)
+	corner(autoChatPanel, 5)
+
+	make("TextLabel", {
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+		Position = UDim2.new(0, 8, 0, 2),
+		Size = UDim2.new(0.5, 0, 0, 18),
+		FontFace = FONT,
+		Text = "Auto Chat",
+		TextColor3 = Color3.fromRGB(200, 210, 255),
+		TextScaled = true,
+		TextStrokeTransparency = 0,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, autoChatPanel)
+
+	local chatGrid = make("ScrollingFrame", {
+		Name = "ChatGrid",
+		Active = true,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 6, 0, 24),
+		Size = UDim2.new(1, -12, 1, -30),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = Color3.fromRGB(100, 120, 255),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+	}, autoChatPanel)
+
+	make("UIGridLayout", {
+		CellSize = UDim2.new(0.5, -4, 0, 30),
+		CellPadding = UDim2.new(0, 4, 0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, chatGrid)
+
+	for i, def in ipairs(AUTOCHAT_BUTTONS) do
+		local button = make("TextButton", {
+			LayoutOrder = i,
+			BackgroundColor3 = def.locked and Color3.fromRGB(40, 40, 48) or Color3.fromRGB(56, 53, 100),
+			BorderSizePixel = 0,
+			FontFace = FONT,
+			Text = def.locked and (def.text .. " (🔒 Locked)") or def.text,
+			TextColor3 = def.locked and Color3.fromRGB(150, 150, 150) or WHITE,
+			TextScaled = true,
+			TextStrokeTransparency = 0,
+			TextWrapped = true,
+			AutoButtonColor = false,
+		}, chatGrid)
+		corner(button, 6)
+		make("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 6 }, button)
+
+		button.MouseButton1Click:Connect(function()
+			if def.locked then return end
+			button.BackgroundColor3 = Color3.fromRGB(90, 85, 160)
+			TweenService:Create(button, TweenInfo.new(0.25), { BackgroundColor3 = Color3.fromRGB(56, 53, 100) }):Play()
+			pcall(def.fn or function() sendChat(def.chat) end)
+		end)
+	end
+
+	-- tab buttons above the HUD: Twisteds / Players / Auto Chat
+	local function makeTabButton(text, x, fn)
+		local b = make("TextButton", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = Color3.fromRGB(56, 53, 100),
+			BorderSizePixel = 0,
+			Position = UDim2.new(x, 0, -0.17525, 0),
+			Size = UDim2.new(0.26979, 0, 0.20458, 0),
+			FontFace = FONT,
+			Text = text,
+			TextColor3 = WHITE,
+			TextScaled = true,
+			TextStrokeTransparency = 0,
+			TextWrapped = true,
+			AutoButtonColor = false,
+		}, latestHud)
+		corner(b, 6)
+		b.MouseButton1Click:Connect(function() pcall(fn) end)
+	end
+
+	makeTabButton("Twisteds", 0.15505, function()
+		autoChatPanel.Visible = false
+		detectorMode = "monsters"
+		playerDetectorSF.Visible = false
+		monsterDetectorSF.Visible = true
+		rebuildMonsterDetector()
+	end)
+	makeTabButton("Players", 0.49163, function()
+		autoChatPanel.Visible = false
+		if detectorMode == "players" then
+			detectorMode = "monsters"
+			playerDetectorSF.Visible = false
+			monsterDetectorSF.Visible = true
+			rebuildMonsterDetector()
+		else
+			detectorMode = "players"
+			monsterDetectorSF.Visible = false
+			playerDetectorSF.Visible = true
+			rebuildPlayerDetector()
+		end
+	end)
+	makeTabButton("Auto Chat", 0.82821, function()
+		autoChatPanel.Visible = not autoChatPanel.Visible
+	end)
+
+	-- draggable (grab the HUD by its edge, the cards scroll instead)
+	local dragging, dragStart, startPos = false, nil, nil
+	latestHud.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = latestHud.Position
+		end
+	end)
+	API.Track(UserInputService.InputChanged:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+			local delta = input.Position - dragStart
+			latestHud.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end))
+	API.Track(UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end))
+
+	infoHudVisible = true
+	rebuildMonsterDetector()
+end
+
+hudButton.MouseButton1Click:Connect(buildLatestHud)
+
+-- ============================================================
+--  HEARTBEAT: animated detector borders + HUD refresh
+-- ============================================================
+local rainbowT, pinkT, lastRefresh = 0, 0, 0
+
+API.Track(RunService.Heartbeat:Connect(function(dt)
+	rainbowT = (rainbowT + dt * 1.5) % 1
+	pinkT = (pinkT + dt * 1.2) % 1
+
+	if #detectorRainbowStrokes > 0 then
+		local color = Color3.fromHSV(rainbowT, 1, 1)
+		for _, s in ipairs(detectorRainbowStrokes) do pcall(function() s.Color = color end) end
+	end
+	if #detectorPinkStrokes > 0 then
+		local t = math.abs(math.sin(pinkT * math.pi))
+		local color = Color3.fromRGB(255, 105, 180):Lerp(WHITE, t)
+		for _, s in ipairs(detectorPinkStrokes) do pcall(function() s.Color = color end) end
+	end
+
+	lastRefresh = lastRefresh + dt
+	if lastRefresh < 1.5 then return end
+	lastRefresh = 0
+
+	if infoHudVisible and latestHud and latestHud.Visible then
+		if medkitAmountLbl then medkitAmountLbl.Text = tostring(countItems("HealthKit")) end
+		if bandageAmountLbl then bandageAmountLbl.Text = tostring(countItems("Bandage")) end
+		if twistedAmountLbl then twistedAmountLbl.Text = tostring(countMonsters()) end
+		-- only rebuild the cards when the list of monsters / players changed
+		if detectorMode == "monsters" then
+			if monsterSignature() ~= lastMonsterSig then rebuildMonsterDetector() end
+		elseif playerSignature() ~= lastPlayerSig then
+			rebuildPlayerDetector()
+		end
+	end
+end))
+
+-- ============================================================
+--  CLEANUP (runs when GScript3 is destroyed / re-run)
+-- ============================================================
+API.OnDestroy(function()
+	notifyEnabled = false
+	notifyToken = notifyToken + 1
+	clearAllTrackers()
+	for _, conn in ipairs(playerHpConnections) do pcall(function() conn:Disconnect() end) end
+end)
+
+-- the map watcher can wait up to 30s for CurrentRoom, so it must not block loading
+task.spawn(setupMapWatcher)
